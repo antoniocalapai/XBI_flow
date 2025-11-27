@@ -5,23 +5,44 @@ Add description
 from pathlib import Path
 import numpy as np
 import seaborn as sns
-from tqdm import tqdm
 import os
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 import pandas as pd
 pd.set_option('mode.chained_assignment', None)
 
+
+# =============================================
+# Setting plotting parameters
+sizeMult = 1.5
+saveplot = 1
+savetable = 1
+
+tickFontSize = 10
+labelFontSize = 12
+titleFontSize = 14
+
+sns.set(style="whitegrid")
+sns.set_context("paper")
+
+# =============================================
+# Parameters for the analysis
+CRT_minimumTrials = 10
+CRT_minimumTrials_TS = 3000
+
 # ==============================================
 # Initialize dataframe for all sessions across all experiments
 trials_df = pd.DataFrame()
+sessions_df = pd.DataFrame()
+crashed_df = pd.DataFrame()
 
 LT_group1 = ['bella', 'kuemmel', 'renate', 'leni']
 LT_group2 = ['fenja', 'granny']
-CM_AUT_list = ['f', 'k', 'c', 'd']
 
-df_filename = "AllTrialsDF.csv"
-CM_metaData = 'Animals_metaData.csv'
+# =============================================
+# Open the csv file and import the DATA
+# Animals_metaData = 'Animals_metaData.csv'
+result_filename = "./analysis_output/Figure_1.txt"
 directory_name = Path("data/")
 
 data_files = os.listdir(directory_name)
@@ -30,201 +51,151 @@ data_files = sorted(list(filter(lambda f: f.endswith('.csv'), data_files)))
 # Cycle through the data files
 for file in data_files:
     if 'CM' in file:
-        if 'AUT' in file:
-            print('===> Processing marmoset data: ' + file)
-            # ====================================================================
-            # 1) Open and process the dataframe
-            csv_file = directory_name / file
-            df = pd.read_csv(csv_file, low_memory=False, decimal=',')
+        print('===> Processing marmoset data: ' + file)
+        # ====================================================================
+        # 1) Open and process the dataframe
+        csv_file = directory_name / file
+        df = pd.read_csv(csv_file, low_memory=False, decimal=',')
 
-            # Remove rows with non assigned animals, with one animal that left early, and from testing sessions
-            df['monkey'] = df['monkey'].loc[~df['monkey'].isin(['nn', 'nan', 'closina', 'test'])]
-            df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
+        # Remove rows with non assigned animals, with one animal that left early, and from testing sessions
+        df['monkey'] = df['monkey'].loc[~df['monkey'].isin(['nn', 'nan', 'closina', 'test'])]
+        df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
 
-            # Reformat a few column names
-            df.rename(columns={"animalsExpectedPerMxbi": "animalsExpected"}, inplace=True)
-            df.rename(columns={"session": "sessionNumber"}, inplace=True)
-            df.rename(columns={"animal": "monkey"}, inplace=True)
+        # Reformat a few column names
+        df.rename(columns={"animalsExpectedPerMxbi": "animalsExpected"}, inplace=True)
+        df.rename(columns={"session": "sessionNumber"}, inplace=True)
+        df.rename(columns={"animal": "monkey"}, inplace=True)
 
-            # Fix one animal's name inconsistencies
-            df['animalsExpected'] = df['animalsExpected'].replace('innotiza', 'innotizia', regex=True)
+        # Fix one animal's name inconsistencies
+        df['animalsExpected'] = df['animalsExpected'].replace('innotiza', 'innotizia', regex=True)
 
-            # fix date and timestamp formatting
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            df['timestamp'] = df['timestamp'].astype(float)
+        # fix date and timestamp formatting
+        df['date'] = pd.to_datetime(df['date'], errors='coerce')
+        df['timestamp'] = df['timestamp'].astype(float)
 
-            # Convert date into day and time of each session
-            df['day'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.date
-            df['time'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.time
+        # Convert date into day and time of each session
+        df['day'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.date
+        df['time'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.time
 
-            AnimalDictionary = pd.read_csv(CM_metaData, low_memory=False, sep=';')
-            for m in AnimalDictionary.monkey.unique():
-                df['monkey'] = df['monkey'].replace({m: AnimalDictionary[AnimalDictionary.monkey == m].ID.to_list()})
+        # Check if exists and format the column animalsExpected
+        df["animalsExpected"] = df["animalsExpected"].apply(eval)
 
-                df['animalsExpected'] = \
-                    df['animalsExpected'].str.replace(m, AnimalDictionary[AnimalDictionary.monkey == m].ID.values[0])
+        # reset the index
+        df = df.reset_index(drop=True)
 
-            # Check if exists and format the column animalsExpected
-            df["animalsExpected"] = df["animalsExpected"].apply(eval)
+        # ====================================================================
+        df['date'] = pd.to_datetime(df.date, format='%Y-%m-%d')
+        df['date'] = df['date'].dt.normalize()
 
-            # Only consider the animals who run the entire staircase
-            df = df.loc[df.monkey.isin(CM_AUT_list)]
+        for device in df.mxbi.unique():
+            for date in df[df['mxbi'] == device].date.unique():
 
-            # reset the index
-            df = df.reset_index(drop=True)
+                # cycle through each session of each device
+                if len(df[(df['mxbi'] == device) & (df['date'] == date)]) > 0:
+                    unique_animals = df[(df['mxbi'] == device) & (df['date'] == date)]['animalsExpected'].values[0]
 
-            # ====================================================================
-            df['date'] = pd.to_datetime(df.date, format='%Y-%m-%d')
-            df['date'] = df['date'].dt.normalize()
+                    # cycle through the animals expected in the session
+                    for monkey in unique_animals:
+                        if monkey != 'closina':  # this makes sure that the animal closina is not considered
 
-            # only take valid steps from the AUT (range 1 to 50)
-            df = df.loc[(df['step'] > 1)]
-            df = df.loc[(df['step'] < 50)]
+                            if (monkey == 'dualina') | (monkey == 'elero'):
+                                group = 'A'
+                            elif (monkey == 'almo') | (monkey == 'blake'):
+                                group = 'B'
+                            elif (monkey == 'ivvy') | (monkey == 'durin'):
+                                group = 'C'
+                            elif monkey == 'duchesse':
+                                group = 'D'
+                            elif monkey == 'cloudy':
+                                group = 'E'
+                            elif (monkey == 'bremer') | (monkey == 'brillux'):
+                                group = 'F'
+                            elif (monkey == 'intro') | (monkey == 'clia'):
+                                group = 'G'
+                            elif (monkey == 'wolfgang') | (monkey == 'innotizia'):
+                                group = 'H'
 
-            # only take versions of the AUT that contain the same steps of version 10
-            df = df.loc[(df['version'] >= 8)]
+                            # create a table (A) with the animal information
+                            A = df[(df['mxbi'] == device) & (df['date'] == date) & (df['monkey'] == monkey)]
 
-            # filter the temporary dataframe (AUT_df) with outcome information
-            df.loc[df['object'].str.contains('correct'), 'object'] = 'reward'
-            df.loc[df['object'].str.contains('wrong'), 'object'] = 'wrong'
-            df.loc[df['object'].str.contains('ign'), 'object'] = 'ignore'
-            df.loc[df['object'].str.contains('start'), 'object'] = 'start'
+                            # create a table (B) with the session information
+                            B = df[(df['mxbi'] == device) & (df['date'] == date)]
 
-            # Duplicate the dataframe
-            df2 = df.loc[(df['object'] == 'reward') | (df['object'] == 'wrong') |
-                        (df['object'] == 'ignore') | (df['object'] == 'start')]
+                            # Assign sessions specific parameters
+                            experiment = df[(df['mxbi'] == device) & (df['date'] == date)]['experiment'].unique()[0]
+                            task = df[(df['mxbi'] == device) & (df['date'] == date)]['task'].unique()[0]
 
-            # sort the staircase by session number and version
-            df2 = df2.sort_values(by=['sessionNumber', 'version'], ignore_index=True)
+                            # look for trials initiated by the animal in table A
+                            if len(A[A['object'].str.contains('start')]) > 0:
+                                sessionNumber = A['sessionNumber'].unique()[0]
 
-            # Cycle through the each animal, date, and trial
-            for m in CM_AUT_list:
-                unique_dates = df2[df2['monkey'] == m]['date'].unique()
-                for d in tqdm(range(0, len(unique_dates))):
-                    # print('-> Processing monkey ' + m)
-                    for t in df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d])]['trial'].unique():
+                                # check if there is the information regarding the end and assign it as end time
+                                if len(B[B['action'] == 'stop']) > 0:
+                                    lastEvent = B[B['action'] == 'stop']['timestamp'].values[-1]
 
-                        A = df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d]) & (df2['trial'] == t)].reset_index()
-                        B = df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d]) & (df2['object'] == 'start')].reset_index()
-                        C = df2[(df2['date'] == unique_dates[d]) & (df2['object'] == 'start')].reset_index()
+                                # ... or use the last trial start (from either animals) as sessions end
+                                else:
+                                    lastEvent = B[B['object'].str.contains('start')]['timestamp'].values[-1]
 
-                        if (len(A) == 2) & (A['object'][0] == 'start'):
-                            trials_df = trials_df.append({
-                                'trial': t,
-                                'date': A.loc[0,'date'],
-                                'time': A.loc[0,'time'],
-                                'trial_timestamp': A.loc[0, 'timestamp'],
-                                'task': A.loc[0,'type'],
-                                'outcome_timestamp': A.loc[1, 'timestamp'],
-                                'outcome': A.loc[1, 'object'],
-                                'step': A.loc[0, 'step'],
-                                'session': A.loc[0, 'sessionNumber'],
-                                'device': A.loc[0, 'mxbi'],
+                                # Compute session duration in minutes
+                                duration = lastEvent / 60000
+
+                                # extract all trial start times
+                                times = list(A[A['object'].str.contains('start')]['timestamp'] / lastEvent)
+
+                                # calculate the median of all start trial times
+                                medianTimes = np.median(list(A[A['object'].str.contains('start')]['timestamp'] / lastEvent))
+
+                            # if there are no trials from animal A in this session
+                            else:
+                                # set the session duration with the session end information
+                                if len(B[B['action'] == 'stop']) > 0:
+                                    lastEvent = B[B['action'] == 'stop']['timestamp'].values[-1]
+                                    duration = lastEvent / 60000
+
+                                # or with the latest trial performed (by either animals)
+                                elif len(B[B['object'].str.contains('start')]) > 0:
+                                    lastEvent = B[B['object'].str.contains('start')]['timestamp'].values[-1]
+                                    duration = lastEvent / 60000
+
+                                # or assign nan if none of the animals interacted
+                                else:
+                                    duration = np.nan
+
+                                # assign nans to missing information
+                                times = np.nan
+                                medianTimes = np.nan
+                                sessionNumber = np.nan
+
+                            # flag the session as crashed if there are two or more datafiles in the current day
+                            crashed = (len(df[(df['mxbi'] == device) & (df['date'] == date)]['filename'].unique()) > 1)
+
+                            # flag the session as switched (to another group) if there are other animals expected
+                            switched = (len(df[(df['mxbi'] == device) &
+                                              (df['date'] == date)]['animalsExpected'].astype(str).unique()) > 1)
+
+                            sessions_df = sessions_df.append({
+                                'device': device,
                                 'fluid': 'during',
                                 'food': 'during',
-                                'duration': C["timestamp"].iloc[-1] /60000,
-                                'experiment': A.loc[0, 'experiment'],
-                                'animal': m,
-                                'isolation': 'no',
+                                'date': date,
+                                'session': sessionNumber,
+                                'duration': duration,
+                                'crashed': crashed,
+                                'switched': switched,
+                                'experiment': experiment,
+                                'task': task,
+                                'animal': monkey,
+                                'group': group,
                                 'species': 'marmoset',
-                                'group': C['animalsExpected'].iloc[-1],
-                                'total_trials': len(B)},
+                                'trials': sum(A['object'].str.contains('start')),
+                                'times': times,
+                                'medianTimes': medianTimes},
                                 ignore_index=True)
 
-            trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-            trials_df = trials_df.reset_index(drop=True)
-
-        if '2AC' in file:
-            print('===> Processing marmoset data: ' + file)
-            # ====================================================================
-            # 1) Open and process the dataframe
-            csv_file = directory_name / file
-            df = pd.read_csv(csv_file, low_memory=False, decimal=',')
-
-            # Remove rows with non assigned animals, with one animal that left early, and from testing sessions
-            df['monkey'] = df['monkey'].loc[~df['monkey'].isin(['nn', 'nan', 'closina', 'test'])]
-            df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
-
-            # Reformat a few column names
-            df.rename(columns={"animalsExpectedPerMxbi": "animalsExpected"}, inplace=True)
-            df.rename(columns={"session": "sessionNumber"}, inplace=True)
-            df.rename(columns={"animal": "monkey"}, inplace=True)
-
-            # Fix one animal's name inconsistencies
-            df['animalsExpected'] = df['animalsExpected'].replace('innotiza', 'innotizia', regex=True)
-
-            # fix date and timestamp formatting
-            df['date'] = pd.to_datetime(df['date'], errors='coerce')
-            df['timestamp'] = df['timestamp'].astype(float)
-
-            # Convert date into day and time of each session
-            df['day'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.date
-            df['time'] = pd.to_datetime(df['date'], format='%Y:%M:%D').dt.time
-
-            AnimalDictionary = pd.read_csv(CM_metaData, low_memory=False, sep=';')
-            for m in AnimalDictionary.monkey.unique():
-                df['monkey'] = df['monkey'].replace({m: AnimalDictionary[AnimalDictionary.monkey == m].ID.to_list()})
-
-                df['animalsExpected'] = \
-                    df['animalsExpected'].str.replace(m, AnimalDictionary[AnimalDictionary.monkey == m].ID.values[0])
-
-            # Check if exists and format the column animalsExpected
-            df["animalsExpected"] = df["animalsExpected"].apply(eval)
-
-            # reset the index
-            df = df.reset_index(drop=True)
-
-            # ====================================================================
-            df['date'] = pd.to_datetime(df.date, format='%Y-%m-%d')
-            df['date'] = df['date'].dt.normalize()
-
-            # filter the temporary dataframe (AUT_df) with outcome information
-            df.loc[df['object'].str.contains('correct'), 'object'] = 'reward'
-            df.loc[df['object'].str.contains('wrong'), 'object'] = 'wrong'
-            df.loc[df['object'].str.contains('ign'), 'object'] = 'ignore'
-            df.loc[df['object'].str.contains('start'), 'object'] = 'start'
-
-            # Duplicate the dataframe
-            df2 = df.loc[(df['object'] == 'reward') | (df['object'] == 'wrong') |
-                         (df['object'] == 'ignore') | (df['object'] == 'start')]
-
-            # sort the staircase by session number and version
-            df2 = df2.sort_values(by=['sessionNumber', 'version'], ignore_index=True)
-
-            # Cycle through each animal, date, and trial
-            for m in df2.monkey.unique():
-                unique_dates = df2[df2['monkey'] == m]['date'].unique()
-                for d in tqdm(range(0, len(unique_dates))):
-                    for t in df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d])]['trial'].unique():
-
-                        A = df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d]) & (df2['trial'] == t)].reset_index()
-                        B = df2[(df2['monkey'] == m) & (df2['date'] == unique_dates[d]) & (df2['object'] == 'start')].reset_index()
-                        C = df2[(df2['date'] == unique_dates[d]) & (df2['object'] == 'start')].reset_index()
-
-                        if (len(A) == 2) & (A['object'][0] == 'start'):
-                            trials_df = trials_df.append({
-                                'species': 'marmoset',
-                                'animal': m,
-                                'date': A.loc[0, 'date'],
-                                'trial_timestamp': A.loc[0, 'timestamp'],
-                                'trial': t,
-                                'time': A.loc[0, 'time'],
-                                'task': A.loc[0, 'type'],
-                                'outcome_timestamp': A.loc[1, 'timestamp'],
-                                'outcome': A.loc[1, 'object'],
-                                'session': A.loc[0, 'sessionNumber'],
-                                'device': A.loc[0, 'mxbi'],
-                                'fluid': 'during',
-                                'food': 'during',
-                                'isolation': 'no',
-                                'duration': C["timestamp"].iloc[-1] / 60000,
-                                'experiment': A.loc[0, 'experiment'],
-                                'group': C['animalsExpected'].iloc[-1],
-                                'total_trials': len(B)},
-                                ignore_index=True)
-
-            trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-            trials_df = trials_df.reset_index(drop=True)
+        # sort the new dataframe and reset its index
+        sessions_df = sessions_df.sort_values(by=['species', 'date'])
+        sessions_df = sessions_df.reset_index(drop=True)
 
     if 'LT' in file:
         print('===> Processing long-tailed data:' + file)
@@ -245,72 +216,176 @@ for file in data_files:
         # Check if exists and format the column animalsExpected
         df["animalsExpected"] = df["animalsExpected"].apply(eval)
 
-        # Reformat date and time columns
-        df['time'] = df['date'].astype(str).str[-6:].astype(np.int64)
-        df['date'] = df['date'].astype(str).str[0:-6].astype(np.int64)
-
-        df['date'] = pd.to_datetime(df.date, format='%Y%m%d').dt.date
-        df['time'] = pd.to_datetime(df.time, format='%H%M%S').dt.time
+        # Reformat date column
+        df['dateR'] = df['date'].astype(str).str[:-6].astype(np.int64)
+        df['dateR'] = pd.to_datetime(df.dateR, format='%Y%m%d')
 
         # Sort by date
-        df = df.sort_values(by=['date', 'monkey', 'timestamp']).reset_index(drop=True)
+        df = df.sort_values(by=['dateR'])
+
+        # reset the index
+        df = df.reset_index(drop=True)
 
         # ====================================================================
-        # Homogenize trial outcomes and trial start identifiers across AUT steps and task versions
-        df.loc[df['object'].str.contains('reward'), 'object'] = 'reward'
-        df.loc[df['object'].str.contains('wrong'), 'object'] = 'wrong'
-        df.loc[df['object'].str.contains('ign'), 'object'] = 'ignore'
-        df.loc[df['object'].str.contains('touched'), 'object'] = 'start'
+        for date in df.dateR.unique():
+            unique_animals = df[df['dateR'] == date]['animalsExpected'].values[0]
 
-        # Remove unnecessary AUT steps
-        df = df.loc[((df['step'] < 49) & (df['step'] >-1)) & (df['trial'] >0)]
+            # cycle through the animals expected in the session
+            for monkey in unique_animals:
+                # create a table (A) with the animal information
+                A = df[(df['dateR'] == date) & (df['monkey'] == monkey)]
 
-        # Duplicate the dataframe and isolate only trial starts and ends
-        df = df.loc[(df['object'] == 'reward') | (df['object'] == 'wrong') |
-                     (df['object'] == 'ignore') | (df['object'] == 'start')].reset_index(drop=True)
+                # create a table (B) with the session information
+                B = df[df['dateR'] == date]
 
-        # Optimize DF sorting for looping
-        df = df.sort_values(by=['monkey', 'date', 'timestamp'], ignore_index=True)
-        df2 = df.copy(deep=False)
+                # Assign sessions specific parameters
+                device = 'lxbi1'
+                experiment = 'AUT'
+                task = 'Acoustic Discrimination'
+                switched = False
 
-        # Cycle through each animal, date, and trial
-        for m in df.monkey.unique():
-            unique_dates = df[df['monkey'] == m]['date'].unique()
-            for d in tqdm(range(0, len(unique_dates))):
-                for t in df[(df['monkey'] == m) & (df['date'] == unique_dates[d])]['trial'].unique():
+                if (monkey == 'fenja') | (monkey == 'granny'):
+                    last_session = df.loc[df['monkey'].isin(LT_group1)]['sessionNumber'].values[-1]
+                    sessionNumber = df[df['dateR'] == date]['sessionNumber'].unique()[0] - last_session
+                    group = 'B'
 
-                    A = df[(df['monkey'] == m) & (df['date'] == unique_dates[d]) & (df['trial'] == t)].reset_index()
-                    B = df[(df['monkey'] == m) & (df['date'] == unique_dates[d]) & (df['object'] == 'start')].reset_index()
-                    C = df2[(df2['date'] == unique_dates[d])].reset_index()
-                    C = C.sort_values(by=['time'], ignore_index=True)
+                else:
+                    sessionNumber = df[df['dateR'] == date]['sessionNumber'].unique()[0]
+                    group = 'A'
 
-                    if (len(A) == 2) & (A['object'][0] == 'start'):
-                        trials_df = trials_df.append({
-                            'species': 'longtail',
-                            'animal': m,
-                            'date': A.loc[0, 'date'],
-                            'trial_timestamp': A.loc[0, 'timestamp'],
-                            'trial': t,
-                            'time': A.loc[0, 'time'],
-                            'task': '2AC',
-                            'step': A.loc[0, 'step'],
-                            'outcome_timestamp': A.loc[1, 'timestamp'],
-                            'outcome': A.loc[1, 'object'],
-                            'session': A.loc[0, 'sessionNumber'],
-                            'device': 'LXBI',
-                            'fluid': 'during',
-                            'food': 'during',
-                            'isolation': 'no',
-                            'duration': C["timestamp"].iloc[-1] / 60000,
-                            'experiment': 'AUT',
-                            'group': C['animalsExpected'].iloc[-1],
-                            'total_trials': len(B)},
-                            ignore_index=True)
+                # flag the session as crashed if there are two or more datafiles in the current day
+                crashed = (len(B[B['action'] == 'stop']) > 0) == 0
 
-        trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-        trials_df = trials_df.reset_index(drop=True)
+                # look for trials initiated by the animal in table A
+                if len(A[A['object'].str.contains('trigger')]) > 0:
 
-    if ('RM' in file) & ('MCI' in file):
+                    # check if there is the information regarding the session end and assign it as end time ...
+                    if len(B[B['action'] == 'stop']) > 0:
+                        lastEvent = B[B['action'] == 'stop']['timestamp'].values[-1]
+
+                    # ... or use the last trial start (from either animals) as sessions end
+                    else:
+                        lastEvent = B[B['object'].str.contains('trigger')]['timestamp'].values[-1]
+
+                    # Compute session duration in minutes
+                    duration = lastEvent / 60000
+
+                    # extract all trial start times
+                    times = list(A[A['object'].str.contains('trigger')]['timestamp'] / lastEvent)
+
+                    # calculate the median of all start trial times
+                    medianTimes = np.median(list(A[A['object'].str.contains('trigger')]['timestamp'] / lastEvent))
+
+                # if there are no trials from animal A in this session
+                else:
+                    # set the session duration with the session end information
+                    if len(B[B['action'] == 'stop']) > 0:
+                        lastEvent = B[B['action'] == 'stop']['timestamp'].values[-1]
+                        duration = lastEvent / 60000
+
+                    # or with the latest trial performed (by either animals)
+                    elif len(B[B['object'].str.contains('trigger')]) > 0:
+                        lastEvent = B[B['object'].str.contains('trigger')]['timestamp'].values[-1]
+                        duration = lastEvent / 60000
+
+                    # or assign nan if none of the animals interacted
+                    else:
+                        duration = np.nan
+
+                    # assign nans to missing information
+                    times = np.nan
+                    medianTimes = np.nan
+
+                sessions_df = sessions_df.append({
+                    'device': device,
+                    'fluid': 'during',
+                    'food': 'during',
+                    'date': date,
+                    'session': sessionNumber,
+                    'duration': duration,
+                    'crashed': crashed,
+                    'switched': switched,
+                    'experiment': experiment,
+                    'task': task,
+                    'animal': monkey,
+                    'species': 'long-tailed',
+                    'group': group,
+                    'trials': sum(A['object'].str.contains('trigger')),
+                    'times': times,
+                    'medianTimes': medianTimes},
+                    ignore_index=True)
+
+        # sort the new dataframe and reset its index
+        sessions_df = sessions_df.sort_values(by=['species', 'date'])
+        sessions_df = sessions_df.reset_index(drop=True)
+
+    if ('RM' in file) & ('Experiment' in file):
+        print('===> Processing Rhesus Macaques data: ' + file)
+        # ====================================================================
+        # 1) Open and process the dataframe
+        csv_file = directory_name / file
+        df = pd.read_csv(csv_file, low_memory=False, decimal=',')
+        df.rename(columns={"subjID": "monkey"}, inplace=True)
+        df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
+
+        df['date'] = pd.to_datetime(df.date, format='%Y%m%d')
+
+        for monkey in df['monkey'].unique():
+            unique_dates = df[df['monkey'] == monkey]['date'].unique()
+
+            for idx in range(0, len(unique_dates)):
+                A = df[(df['date'] == unique_dates[idx]) & (df['monkey'] == monkey)]
+
+                # Assign sessions specific parameters
+                device = 'xbi'
+                task = 'Reversal Learning'
+                sessionNumber = idx+1
+                switched = False
+                crashed = False
+                lastEvent = A.sessionEnd.values[-1]
+                duration = lastEvent / 60000000
+
+                unique_experiments = A.experiment.unique()
+                for exp in unique_experiments:
+                    B = A[A['experiment'] == exp]
+                    experiment = exp
+
+                    # look for trials initiated by the animal in table A
+                    if len(B) > 0:
+                        # extract all trial start times
+                        times = list(B['trialStart'] / lastEvent)
+
+                        # calculate the median of all start trial times
+                        medianTimes = np.median(times)
+
+                    else:
+                        times = np.nan
+                        medianTimes = np.nan
+
+                    sessions_df = sessions_df.append({
+                        'device': device,
+                        'fluid': 'after',
+                        'food': 'after',
+                        'date': unique_dates[idx],
+                        'session': sessionNumber,
+                        'duration': duration,
+                        'crashed': crashed,
+                        'switched': switched,
+                        'experiment': experiment,
+                        'task': task,
+                        'animal': monkey,
+                        'species': 'rhesus',
+                        'group': monkey,
+                        'trials': len(B),
+                        'times': times,
+                        'medianTimes': medianTimes},
+                        ignore_index=True)
+
+        # sort the new dataframe and reset its index
+        sessions_df = sessions_df.sort_values(by=['species', 'date'])
+        sessions_df = sessions_df.reset_index(drop=True)
+
+    if ('RM' in file) & ('Enrichment' in file):
         print('===> Processing Rhesus Macaques data: ' + file)
         # ====================================================================
         # 1) Open and process the dataframe
@@ -320,169 +395,86 @@ for file in data_files:
 
         df['date'] = pd.to_datetime(df.date, format='%Y%m%d')
 
-        for m in df['monkey'].unique():
-            unique_dates = df[df['monkey'] == m]['date'].unique()
+        for monkey in df['monkey'].unique():
+            unique_dates = df[df['monkey'] == monkey]['date'].unique()
 
-            for d in tqdm(range(0, len(unique_dates))):
-                A = df[(df['date'] == unique_dates[d]) & (df['monkey'] == m)].reset_index()
-                B = df[(df['group'] == A['group'].unique()[0]) & (df['date'] == unique_dates[d])].reset_index()
+            for idx in range(0, len(unique_dates)):
+                A = df[(df['date'] == unique_dates[idx]) & (df['monkey'] == monkey)]
 
-                for t in range(0,len(A)):
-                    trials_df = trials_df.append({
-                        'trial': A.loc[t, 'trial'],
-                        'date': A.loc[t, 'date'],
-                        'time': A.loc[t, 'time_of_day'],
-                        'trial_timestamp': A.loc[t, 'trial_start'],
-                        'task': A.loc[t, 'selection'],
-                        'stimulus_size': A.loc[t, 'size'],
-                        'stimulus_speed': A.loc[t, 'speed'],
-                        'outcome_timestamp': A.loc[t, 'outcomeTime'] / 1000,
-                        'outcome': A.loc[t, 'outcome'],
-                        'session': A.loc[t, 'date'],
-                        'device': A.loc[t, 'xbi'],
+                # Assign sessions specific parameters
+                device = A.xbi.unique()
+                task = A.experiment.unique()
+                sessionNumber = idx+1
+                switched = False
+                crashed = False
+                lastEvent = A.session_end.values[-1]
+                duration = lastEvent / 60000000
+
+                unique_experiments = A.experiment.unique()
+                for exp in unique_experiments:
+                    B = A[A['experiment'] == exp]
+                    experiment = exp
+
+                    # look for trials initiated by the animal in table A
+                    if len(B) > 0:
+                        # extract all trial start times
+                        times = list(B['trial_start'] / lastEvent)
+
+                        # calculate the median of all start trial times
+                        medianTimes = np.median(times)
+
+                    else:
+                        times = np.nan
+                        medianTimes = np.nan
+
+                    sessions_df = sessions_df.append({
+                        'device': device,
                         'fluid': 'during',
                         'food': 'during',
-                        'duration': A.loc[t, 'session_end'] / 60000000,
-                        'experiment': 'MCI',
-                        'animal': m,
-                        'isolation': 'no',
+                        'date': unique_dates[idx],
+                        'session': sessionNumber,
+                        'duration': duration,
+                        'crashed': crashed,
+                        'switched': switched,
+                        'experiment': experiment,
+                        'task': task,
+                        'animal': monkey,
                         'species': 'rhesus',
-                        'group': A['group'].unique(),
-                        'total_trials': len(A)},
+                        'group': monkey,
+                        'trials': len(B),
+                        'times': times,
+                        'medianTimes': medianTimes},
                         ignore_index=True)
 
-        # sort the new dataframe and reset its index
-        trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-        trials_df = trials_df.reset_index(drop=True)
+                    for t in range(0,len(A)):
+                        trials_df = trials_df.append({
+                            'trial': A.loc[t, 'trial'],
+                            'date': A.loc[t, 'date'],
+                            'session': A.loc[t, 'date'],
 
-    if ('RM' in file) & ('AUT' in file):
-        print('===> Processing Rhesus Macaques data: ' + file)
-        # ====================================================================
-        # 1) Open and process the dataframe
-        csv_file = directory_name / file
-        df = pd.read_csv(csv_file, low_memory=False, decimal=',')
-        df.rename(columns={"subjID": "monkey"}, inplace=True)
-        df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
+                            'device': device,
+                            'fluid': 'during',
+                            'food': 'during',
+                            'date': unique_dates[idx],
+                            'session': sessionNumber,
+                            'duration': duration,
+                            'crashed': crashed,
+                            'switched': switched,
+                            'experiment': experiment,
+                            'task': task,
+                            'animal': monkey,
+                            'species': 'rhesus',
+                            'group': monkey,
+                            'trials': len(B),
+                            'times': times,
+                            'medianTimes': medianTimes},
+                            ignore_index=True)
 
-        df['date'] = pd.to_datetime(df.date, format='%Y%m%d')
-
-        df.loc[df['outcome'] == 1, 'outcome'] = 'reward'
-        df.loc[df['outcome'] == 0, 'outcome'] = 'wrong'
-
-        for m in df['monkey'].unique():
-            unique_dates = df[df['monkey'] == m]['date'].unique()
-
-            for d in tqdm(range(0, len(unique_dates))):
-                A = df[(df['date'] == unique_dates[d]) & (df['monkey'] == m)].reset_index()
-
-                for t in range(0,len(A)):
-                    trials_df = trials_df.append({
-                        'trial': A.loc[t, 'trial'],
-                        'date': A.loc[t, 'date'],
-                        'trial_timestamp': A.loc[t, 'trialStart'] / 1000,
-                        'task': '4AC',
-                        'outcome_timestamp': A.loc[t, 'trialEnd'] / 1000,
-                        'outcome': A.loc[t, 'outcome'],
-                        'step': A.loc[t, 'step'],
-                        'session': A.loc[t, 'date'],
-                        'fluid': 'before&after',
-                        'food': 'after',
-                        'duration': A.loc[t, 'sessionEnd'] / 60000000,
-                        'experiment': 'AUT',
-                        'animal': m,
-                        'isolation': 'yes',
-                        'species': 'rhesus',
-                        'group': m,
-                        'total_trials': len(A)},
-                        ignore_index=True)
 
         # sort the new dataframe and reset its index
-        trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-        trials_df = trials_df.reset_index(drop=True)
+        sessions_df = sessions_df.sort_values(by=['species', 'date'])
+        sessions_df = sessions_df.reset_index(drop=True)
 
-    if ('RM' in file) & ('MDSS' in file):
-        print('===> Processing Rhesus Macaques data: ' + file)
-        # ====================================================================
-        # 1) Open and process the dataframe
-        csv_file = directory_name / file
-        df = pd.read_csv(csv_file, low_memory=False, decimal=',')
-        df.rename(columns={"subjID": "monkey"}, inplace=True)
-        df = df.loc[df.monkey.isin(list(df['monkey'].dropna().unique()))]
-
-        df['date'] = pd.to_datetime(df.date, format='%Y%m%d')
-
-        df.loc[df['outcome'] == 1, 'outcome'] = 'reward'
-        df.loc[df['outcome'] == 0, 'outcome'] = 'wrong'
-
-        for m in df['monkey'].unique():
-            unique_dates = df[df['monkey'] == m]['date'].unique()
-
-            for d in tqdm(range(0, len(unique_dates))):
-                A = df[(df['date'] == unique_dates[d]) & (df['monkey'] == m)].reset_index()
-
-                for t in range(0,len(A)):
-                    trials_df = trials_df.append({
-                        'trial': A.loc[t, 'trial'],
-                        'date': A.loc[t, 'date'],
-                        'trial_timestamp': A.loc[t, 'trialStart'] / 1000,
-                        'task': '4AC',
-                        'outcome_timestamp': A.loc[t, 'trialEnd'] / 1000,
-                        'outcome': A.loc[t, 'outcome'],
-                        'session': A.loc[t, 'date'],
-                        'fluid': 'before&after',
-                        'food': 'after',
-                        'isolation': 'yes',
-                        'duration': A.loc[t, 'sessionEnd'] / 60000000,
-                        'experiment': 'MDSS',
-                        'animal': m,
-                        'species': 'rhesus',
-                        'group': m,
-                        'total_trials': len(A)},
-                        ignore_index=True)
-
-        # sort the new dataframe and reset its index
-        trials_df = trials_df.sort_values(by=['species', 'animal', 'date', 'trial_timestamp'])
-        trials_df = trials_df.reset_index(drop=True)
-
-# ========
-# Load the dataframe
-trials_df = pd.read_csv(df_filename, low_memory=False, decimal=',')
-
-# sort the columns to an arbitrary order
-trials_df = trials_df[['species', 'animal', 'trial', 'trial_timestamp', 'date', 'time', 'outcome', 'outcome_timestamp',
-                       'step', 'experiment', 'task', 'device', 'group', 'duration', 'total_trials',
-                       'fluid', 'food', 'isolation', 'stimulus_size', 'stimulus_speed']]
-
-# sort the rows
-trials_df = trials_df.sort_values(by=['species', 'date', 'trial'])
-
-# Set columns to string type
-trials_df['species'] = trials_df['species'].astype(str)
-trials_df['animal'] = trials_df['animal'].astype(str)
-trials_df['outcome'] = trials_df['outcome'].astype(str)
-trials_df['experiment'] = trials_df['experiment'].astype(str)
-trials_df['task'] = trials_df['task'].astype(str)
-trials_df['device'] = trials_df['device'].astype(str)
-trials_df['food'] = trials_df['food'].astype(str)
-trials_df['fluid'] = trials_df['fluid'].astype(str)
-trials_df['isolation'] = trials_df['isolation'].astype(str)
-
-# Set columns to integers
-trials_df['trial'] = trials_df['trial'].astype(int)
-trials_df['trial_timestamp'] = trials_df['trial_timestamp'].astype(float)
-trials_df['trial_timestamp'] = trials_df['trial_timestamp'].astype(int)
-trials_df['outcome_timestamp'] = trials_df['outcome_timestamp'].astype(float)
-trials_df['outcome_timestamp'] = trials_df['outcome_timestamp'].astype(int)
-trials_df['total_trials'] = trials_df['total_trials'].astype(int)
-trials_df['step'] = trials_df['step'].astype(float)
-trials_df['step'] = trials_df['step'].astype('Int64')
-
-# Homogenize DF
-trials_df.loc[trials_df['outcome'].str.contains('hit'), 'outcome'] = 'reward'
-trials_df.loc[trials_df['experiment'].str.contains('detection'), 'experiment'] = 'Acoustic Detection'
-trials_df.loc[trials_df['experiment'].str.contains('discrimination'), 'experiment'] = 'Acoustic Discrimination'
-trials_df = trials_df.loc[trials_df['outcome'] != 'start'].reset_index(drop=True)
-
-trials_df.to_csv(df_filename, sep=',', index=False)
+sessions_df.to_csv('./data/ALL_SessionsDF.csv', sep=',', index=False)
 
 
